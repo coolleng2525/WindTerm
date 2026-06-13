@@ -25,6 +25,7 @@ Pty::Pty()
 	: m_columns(-1)
 	, m_errorCode(0)
 	, m_rows(-1)
+	, m_hubTermEnabled(false)
 #ifdef Q_OS_WIN
 	, m_winProcessEventNotifier(nullptr)
 #endif
@@ -93,3 +94,17 @@ void Pty::uninstallWinProcessEventNotifier(void *handle) {
 	}
 }
 #endif
+
+void Pty::setHubTermEnabled(bool enabled) {
+	m_hubTermEnabled = enabled;
+}
+
+bool Pty::isHubTermEnabled() const {
+	return m_hubTermEnabled;
+}
+
+void Pty::onDataReceived(const QByteArray &data) {
+	if (m_hubTermEnabled) {
+		emit dataReceived(data);
+	}
+}

@@ -304,6 +304,8 @@ QByteArray UnixPty::readAll() {
 	QByteArray shellReadBuffer = m_shellReadBuffer;
 
 	m_shellReadBuffer.clear();
+
+	onDataReceived(shellReadBuffer);
 	return shellReadBuffer;
 }
 

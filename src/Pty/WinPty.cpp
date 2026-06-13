@@ -161,6 +161,8 @@ QByteArray WinPty::readAll() {
 		buffer = m_inSocket->readAll();
 		Q_ASSERT(buffer.isEmpty() == false);
 	}
+
+	onDataReceived(buffer);
 	return buffer;
 }
 

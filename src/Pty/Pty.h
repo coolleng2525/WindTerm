@@ -43,6 +43,16 @@ public:
 	void setErrorString(const QString &errorString);
 	virtual qint64 write(const QByteArray &text) = 0;
 
+	// HubTerm integration
+	void setHubTermEnabled(bool enabled);
+	bool isHubTermEnabled() const;
+
+Q_SIGNALS:
+	void dataReceived(const QByteArray &data);
+
+protected:
+	void onDataReceived(const QByteArray &data);
+
 protected:
 #ifdef Q_OS_WIN
 	void installWinProcessEventNotifier(void *handle);
@@ -64,6 +74,7 @@ private:
 
 	int m_errorCode;
 	QString m_errorString;
+	bool m_hubTermEnabled;
 
 #ifdef Q_OS_WIN
 	QWinEventNotifier *m_winProcessEventNotifier;

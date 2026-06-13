@@ -5,6 +5,58 @@ _Hello WindTerm :rose:, hello world!_
 
 **We're just beginning! If you want a high performance text editor, you can try [WindEdit](https://www.github.com/kingToolbox/WindEdit/).**
 
+---
+
+## HubTerm Integration
+
+This fork integrates **HubTerm Agent** — WindTerm becomes a managed node in the HubTerm cluster.
+
+### What it does
+
+- **Auto-discovery**: WindTerm automatically connects to HubTerm center on startup
+- **Capability reporting**: Reports local serial ports, SSH sessions, system info every 3s
+- **Remote management**: Receives commands from center (connect, disconnect, exec script)
+- **Terminal sharing**: Terminal I/O is streamed to HubTerm in real-time — Web UI and AI can see the same session
+- **Permission control**: Read-only / writable mode per session
+
+### How to use
+
+1. Start HubTerm center (see [HubTerm](https://github.com/coolleng2525/hubterm))
+2. Configure `hubterm.json` in WindTerm config directory:
+   ```json
+   {
+     "center_url": "ws://your-center:8080/ws",
+     "node_name": "my-workstation",
+     "domain": "mycompany.com"
+   }
+   ```
+3. Start WindTerm — it auto-connects and registers
+4. Open HubTerm Web UI to see the node and its serial ports
+
+### Architecture
+
+```
+WindTerm (Qt/C++)
+├── Pty (terminal core) ← hooked by TerminalShare
+├── HubTermAgent
+│   ├── Config — load hubterm.json
+│   ├── Reporter — collect & report capabilities
+│   ├── Commander — receive & execute commands
+│   └── TerminalShare — stream Pty I/O via WebSocket
+└── QWebSocket ←→ HubTerm Center
+```
+
+### Build
+
+Requires Qt with WebSocket module:
+```bash
+mkdir build && cd build
+cmake .. -DCMAKE_PREFIX_PATH=/path/to/qt
+make
+```
+
+---
+
 # License
 **Completely FREE for commercial and non-commercial use without limitations.**
 **All released source codes (except thirdparty directory) are provided under the terms of Apache-2.0 license.**

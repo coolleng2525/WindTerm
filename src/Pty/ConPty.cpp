@@ -195,7 +195,10 @@ bool ConPty::isAvailable() {
 
 QByteArray ConPty::readAll() {
 	ThreadLocker<SpinMutex> locker(m_mutex);
-	return std::move(m_buffer);
+	QByteArray buffer = std::move(m_buffer);
+
+	onDataReceived(buffer);
+	return buffer;
 }
 
 bool ConPty::resizeWindow(qint16 rows, qint16 columns) {
