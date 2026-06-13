@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*-hubterm-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        run: |
+          echo "## WindTerm with HubTerm Agent" > release-notes.md
+          echo "" >> release-notes.md
+          echo "基于 WindTerm ${{ github.ref_name }} 集成 HubTerm Agent。" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "### 新增功能" >> release-notes.md
+          echo "- HubTerm Agent 集成（自发现/自上报/被管理/终端共享）" >> release-notes.md
+          echo "- Pty 数据透传 hook" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "### 分支" >> release-notes.md
+          echo "- \`hubterm-v1\`: HubTerm 集成分支" >> release-notes.md
+          echo "- \`master\`: 上游原始分支" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "### 构建说明" >> release-notes.md
+          echo "需要 Qt 5.15+ (含 WebSocket 模块) 和 CMake 3.16+" >> release-notes.md
+          echo "" >> release-notes.md
+          echo '```bash' >> release-notes.md
+          echo "mkdir build && cd build" >> release-notes.md
+          echo 'cmake .. -DCMAKE_PREFIX_PATH=/path/to/qt' >> release-notes.md
+          echo "make" >> release-notes.md
+          echo '```' >> release-notes.md
+
+      - name: Create source archive
+        run: |
+          git archive --format=tar.gz --prefix=WindTerm-${{ github.ref_name }}/ \
+            -o WindTerm-${{ github.ref_name }}-src.tar.gz HEAD
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: |
+            WindTerm-${{ github.ref_name }}-src.tar.gz
