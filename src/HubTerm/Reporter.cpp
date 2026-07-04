@@ -24,6 +24,7 @@
 #include <QTextStream>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QThread>
 
 #ifdef Q_OS_UNIX
 #include <unistd.h>
@@ -101,8 +102,7 @@ QJsonObject HubTermReporter::collectSystemInfo() {
 	}
 #endif
 
-	// CPU count
-	info[QStringLiteral("cpu_count")] = static_cast<int>(QSysInfo::numberOfCpus().value_or(0));
+	info[QStringLiteral("cpu_count")] = QThread::idealThreadCount();
 
 	// Memory info (approximate)
 #ifdef Q_OS_LINUX
@@ -127,15 +127,59 @@ QJsonObject HubTermReporter::collectSystemInfo() {
 	return info;
 }
 
+QJsonObject HubTermReporter::collectSystemMetrics() {
+	QJsonObject metrics;
+	quint64 memoryTotal = 0;
+	quint64 memoryUsed = 0;
+
+#ifdef Q_OS_LINUX
+	QFile memInfo(QStringLiteral("/proc/meminfo"));
+	if (memInfo.open(QIODevice::ReadOnly)) {
+		QTextStream in(&memInfo);
+		QString line;
+		quint64 memoryAvailable = 0;
+
+		while (in.readLineInto(&line)) {
+			const QStringList parts = line.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+			if (parts.size() < 2) {
+				continue;
+			}
+			if (parts[0] == QLatin1String("MemTotal:")) {
+				memoryTotal = parts[1].toULongLong() * 1024;
+			} else if (parts[0] == QLatin1String("MemAvailable:")) {
+				memoryAvailable = parts[1].toULongLong() * 1024;
+			}
+		}
+		if (memoryTotal > memoryAvailable) {
+			memoryUsed = memoryTotal - memoryAvailable;
+		}
+	}
+#endif
+
+	QStorageInfo root = QStorageInfo::root();
+	const quint64 diskTotal = root.bytesTotal() > 0 ? static_cast<quint64>(root.bytesTotal()) : 0;
+	const quint64 diskFree = root.bytesAvailable() > 0 ? static_cast<quint64>(root.bytesAvailable()) : 0;
+	const quint64 diskUsed = diskTotal > diskFree ? diskTotal - diskFree : 0;
+
+	metrics[QStringLiteral("cpu_percent")] = 0.0;
+	metrics[QStringLiteral("memory_total")] = static_cast<double>(memoryTotal);
+	metrics[QStringLiteral("memory_used")] = static_cast<double>(memoryUsed);
+	metrics[QStringLiteral("memory_percent")] = memoryTotal > 0 ? static_cast<double>(memoryUsed) / static_cast<double>(memoryTotal) * 100.0 : 0.0;
+	metrics[QStringLiteral("disk_total")] = static_cast<double>(diskTotal);
+	metrics[QStringLiteral("disk_used")] = static_cast<double>(diskUsed);
+	return metrics;
+}
+
 QJsonArray HubTermReporter::collectSerialPorts() {
 	QJsonArray ports;
 	QStringList portPaths = scanSerialPorts();
 
 	for (const QString &path : portPaths) {
 		QJsonObject port;
-		port[QStringLiteral("path")] = path;
-		port[QStringLiteral("name")] = QFileInfo(path).fileName();
-		port[QStringLiteral("available")] = true;
+		port[QStringLiteral("port_name")] = path;
+		port[QStringLiteral("description")] = QFileInfo(path).fileName();
+		port[QStringLiteral("status")] = QStringLiteral("online");
+		port[QStringLiteral("baud_rate")] = 0;
 		ports.append(port);
 	}
 

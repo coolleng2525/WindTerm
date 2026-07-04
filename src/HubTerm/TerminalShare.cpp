@@ -18,13 +18,18 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDateTime>
 
 #include "Pty/Pty.h"
 
-TerminalShare::TerminalShare(Pty *pty, QWebSocket *ws, QObject *parent /*= nullptr*/)
+TerminalShare::TerminalShare(Pty *pty, QWebSocket *ws, const QString &sessionId,
+							 const QString &portName, QObject *parent /*= nullptr*/)
 	: QObject(parent)
 	, m_pty(pty)
 	, m_ws(ws)
+	, m_sessionId(sessionId)
+	, m_portName(portName)
+	, m_connectedAt(QDateTime::currentSecsSinceEpoch())
 	, m_writable(true)
 	, m_readonly(false)
 {
@@ -38,6 +43,10 @@ TerminalShare::~TerminalShare() {
 	if (m_pty) {
 		disconnect(m_pty, nullptr, this, nullptr);
 	}
+}
+
+void TerminalShare::setWebSocket(QWebSocket *ws) {
+	m_ws = ws;
 }
 
 void TerminalShare::setWritable(bool writable) {
@@ -69,7 +78,11 @@ void TerminalShare::onPtyReadyRead() {
 
 	QJsonObject msg;
 	msg[QStringLiteral("type")] = QStringLiteral("terminal_data");
-	msg[QStringLiteral("data")] = QString::fromLatin1(data.toBase64());
+	QJsonObject payload;
+	payload[QStringLiteral("session_id")] = m_sessionId;
+	payload[QStringLiteral("direction")] = QStringLiteral("output");
+	payload[QStringLiteral("data")] = QString::fromLatin1(data.toBase64());
+	msg[QStringLiteral("data")] = payload;
 
 	QJsonDocument doc(msg);
 	m_ws->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));

@@ -9,7 +9,24 @@ permissions:
   contents: write
 
 jobs:
+  build-hubterm-module:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ qtbase5-dev libqt5websockets5-dev
+
+      - name: Configure HubTerm module
+        run: cmake -S . -B build -DWINDTERM_BUILD_HUBTERM_ONLY=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build HubTerm module
+        run: cmake --build build --config Release --parallel
+
   release:
+    needs: build-hubterm-module
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,12 +48,12 @@ jobs:
           echo "- \`master\`: 上游原始分支" >> release-notes.md
           echo "" >> release-notes.md
           echo "### 构建说明" >> release-notes.md
-          echo "需要 Qt 5.15+ (含 WebSocket 模块) 和 CMake 3.16+" >> release-notes.md
+          echo "此仓库快照当前提供 HubTerm 集成模块的独立编译验证；完整 WindTerm 应用仍需要完整上游工程文件。" >> release-notes.md
+          echo "需要 Qt 5.15+ (Core/Network/WebSockets) 和 CMake 3.16+" >> release-notes.md
           echo "" >> release-notes.md
           echo '```bash' >> release-notes.md
-          echo "mkdir build && cd build" >> release-notes.md
-          echo 'cmake .. -DCMAKE_PREFIX_PATH=/path/to/qt' >> release-notes.md
-          echo "make" >> release-notes.md
+          echo "cmake -S . -B build -DWINDTERM_BUILD_HUBTERM_ONLY=ON" >> release-notes.md
+          echo "cmake --build build --parallel" >> release-notes.md
           echo '```' >> release-notes.md
 
       - name: Create source archive

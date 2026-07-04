@@ -32,16 +32,17 @@ public:
 	~HubTermReporter() = default;
 
 	QJsonObject collectSystemInfo();
+	QJsonObject collectSystemMetrics();
 	QJsonArray collectSerialPorts();
 	QJsonObject collectCapabilities();
+	QString osName() const;
+	QString cpuArchitecture() const;
 
 signals:
 	void reportReady(const QJsonObject &report);
 
 private:
 	QStringList scanSerialPorts() const;
-	QString osName() const;
-	QString cpuArchitecture() const;
 };
 
 #endif // HUBTERM_REPORTER_H

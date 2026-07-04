@@ -54,7 +54,7 @@ HubTermCommander::HubTermCommander(QObject *parent /*= nullptr*/)
 HubTermCommander::CommandType HubTermCommander::parseCommandType(const QString &type) const {
 	if (type == QLatin1String("connect")) return CommandType::Connect;
 	if (type == QLatin1String("disconnect")) return CommandType::Disconnect;
-	if (type == QLatin1String("exec_script")) return CommandType::ExecScript;
+	if (type == QLatin1String("exec") || type == QLatin1String("exec_script")) return CommandType::ExecScript;
 	if (type == QLatin1String("set_permission")) return CommandType::SetPermission;
 	if (type == QLatin1String("update_config")) return CommandType::UpdateConfig;
 	if (type == QLatin1String("restart")) return CommandType::Restart;
@@ -65,10 +65,13 @@ HubTermCommander::CommandType HubTermCommander::parseCommandType(const QString &
 
 bool HubTermCommander::execute(const QJsonObject &command) {
 	emit commandReceived(command);
+	m_lastResultData = QJsonObject();
+	m_lastResultMessage = QString();
 
 	QString typeStr = command.value(QStringLiteral("type")).toString();
-	QString commandId = command.value(QStringLiteral("id")).toString();
-	QJsonObject params = command.value(QStringLiteral("params")).toObject();
+	QJsonObject data = command.value(QStringLiteral("data")).toObject();
+	QString commandId = data.value(QStringLiteral("id")).toString(command.value(QStringLiteral("id")).toString());
+	QJsonObject params = data.value(QStringLiteral("payload")).toObject(command.value(QStringLiteral("params")).toObject());
 
 	CommandType type = parseCommandType(typeStr);
 
@@ -90,7 +93,10 @@ bool HubTermCommander::execute(const QJsonObject &command) {
 	bool success = it.value()(params);
 
 	QJsonObject result = buildResponse(commandId, success,
-		success ? QStringLiteral("Command executed successfully") : QStringLiteral("Command execution failed"));
+		m_lastResultMessage.isEmpty()
+			? (success ? QStringLiteral("Command executed successfully") : QStringLiteral("Command execution failed"))
+			: m_lastResultMessage,
+		m_lastResultData);
 	emit commandResult(result);
 	return success;
 }
@@ -104,20 +110,18 @@ bool HubTermCommander::handleConnect(const QJsonObject &params) {
 	// Connect to a remote device via SSH/serial
 	// This is a stub — the actual connection logic is in the closed-source GUI
 	// The HubTerm agent emits a signal that the GUI can intercept
-	emit commandResult(buildResponse(QString(), true,
-		QStringLiteral("Connect command received. GUI integration required for full implementation.")));
+	m_lastResultMessage = QStringLiteral("Connect command received. GUI integration required for full implementation.");
 	return true;
 }
 
 bool HubTermCommander::handleDisconnect(const QJsonObject &params) {
 	Q_UNUSED(params)
-	emit commandResult(buildResponse(QString(), true,
-		QStringLiteral("Disconnect command received.")));
+	m_lastResultMessage = QStringLiteral("Disconnect command received.");
 	return true;
 }
 
 bool HubTermCommander::handleExecScript(const QJsonObject &params) {
-	QString script = params.value(QStringLiteral("script")).toString();
+	QString script = params.value(QStringLiteral("command")).toString(params.value(QStringLiteral("script")).toString());
 	QString shell = params.value(QStringLiteral("shell")).toString(
 		QStringLiteral("/bin/sh"));
 
@@ -142,8 +146,8 @@ bool HubTermCommander::handleExecScript(const QJsonObject &params) {
 	data[QStringLiteral("stderr")] = QString::fromUtf8(process.readAllStandardError());
 	data[QStringLiteral("exit_code")] = process.exitCode();
 
-	emit commandResult(buildResponse(QString(), true,
-		QStringLiteral("Script executed"), data));
+	m_lastResultMessage = QStringLiteral("Script executed");
+	m_lastResultData = data;
 	return true;
 }
 
@@ -194,8 +198,8 @@ bool HubTermCommander::handleGetStatus(const QJsonObject &params) {
 	data[QStringLiteral("version")] = QStringLiteral("1.0.0");
 	data[QStringLiteral("uptime")] = 0;
 
-	emit commandResult(buildResponse(QString(), true,
-		QStringLiteral("Status retrieved"), data));
+	m_lastResultMessage = QStringLiteral("Status retrieved");
+	m_lastResultData = data;
 	return true;
 }
 
@@ -203,14 +207,23 @@ QJsonObject HubTermCommander::buildResponse(const QString &commandId, bool succe
 											const QString &message, const QJsonObject &data) const {
 	QJsonObject response;
 
-	response[QStringLiteral("type")] = QStringLiteral("response");
-	response[QStringLiteral("id")] = commandId;
-	response[QStringLiteral("success")] = success;
-	response[QStringLiteral("message")] = message;
+	response[QStringLiteral("type")] = QStringLiteral("exec_result");
+
+	QJsonObject payload;
+	payload[QStringLiteral("cmd_id")] = commandId;
+	payload[QStringLiteral("exit_code")] = success ? 0 : 1;
+	if (success) {
+		payload[QStringLiteral("stdout")] = message;
+	} else {
+		payload[QStringLiteral("stderr")] = message;
+	}
 
 	if (!data.isEmpty()) {
-		response[QStringLiteral("data")] = data;
+		for (auto it = data.begin(); it != data.end(); ++it) {
+			payload[it.key()] = it.value();
+		}
 	}
+	response[QStringLiteral("data")] = payload;
 
 	return response;
 }

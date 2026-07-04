@@ -70,6 +70,8 @@ private:
 							  const QString &message, const QJsonObject &data = QJsonObject()) const;
 
 	QMap<CommandType, CommandHandler> m_handlers;
+	QJsonObject m_lastResultData;
+	QString m_lastResultMessage;
 };
 
 #endif // HUBTERM_COMMANDER_H

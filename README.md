@@ -14,8 +14,8 @@ This fork integrates **HubTerm Agent** — WindTerm becomes a managed node in th
 ### What it does
 
 - **Auto-discovery**: WindTerm automatically connects to HubTerm center on startup
-- **Capability reporting**: Reports local serial ports, SSH sessions, system info every 3s
-- **Remote management**: Receives commands from center (connect, disconnect, exec script)
+- **Capability reporting**: Reports local serial ports, terminal sessions, system metrics every 3s
+- **Remote management**: Receives commands from center (`write`, `disconnect`, `exec`)
 - **Terminal sharing**: Terminal I/O is streamed to HubTerm in real-time — Web UI and AI can see the same session
 - **Permission control**: Read-only / writable mode per session
 
@@ -25,12 +25,13 @@ This fork integrates **HubTerm Agent** — WindTerm becomes a managed node in th
 2. Configure `hubterm.json` in WindTerm config directory:
    ```json
    {
-     "center_url": "ws://your-center:8080/ws",
+     "center_url": "ws://your-center:8097/api/ws/agent",
      "node_name": "my-workstation",
-     "domain": "mycompany.com"
+     "domain": "mycompany.com",
+     "enabled": true
    }
    ```
-3. Start WindTerm — it auto-connects and registers
+3. Start WindTerm — it auto-registers through `/api/nodes/report`, stores the returned node token, then connects to `/api/ws/agent` with the `hubterm.node.<token>` WebSocket subprotocol.
 4. Open HubTerm Web UI to see the node and its serial ports
 
 ### Architecture
@@ -48,12 +49,15 @@ WindTerm (Qt/C++)
 
 ### Build
 
-Requires Qt with WebSocket module:
+This repository snapshot contains the independently buildable HubTerm integration module. It does not include the complete WindTerm application project files.
+
+Requires Qt Core/Network/WebSockets and CMake:
 ```bash
-mkdir build && cd build
-cmake .. -DCMAKE_PREFIX_PATH=/path/to/qt
-make
+cmake -S . -B build -DWINDTERM_BUILD_HUBTERM_ONLY=ON
+cmake --build build --parallel
 ```
+
+GitHub Actions runs this same module build before creating `*-hubterm-v*` releases.
 
 ---
 

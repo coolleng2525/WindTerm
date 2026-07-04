@@ -20,6 +20,7 @@
 #include <QObject>
 #include <QWebSocket>
 #include <QByteArray>
+#include <QString>
 
 class Pty;
 
@@ -29,9 +30,15 @@ class TerminalShare
 	Q_OBJECT
 
 public:
-	explicit TerminalShare(Pty *pty, QWebSocket *ws, QObject *parent = nullptr);
+	explicit TerminalShare(Pty *pty, QWebSocket *ws, const QString &sessionId,
+						   const QString &portName, QObject *parent = nullptr);
 	~TerminalShare();
 
+	QString sessionId() const { return m_sessionId; }
+	QString portName() const { return m_portName; }
+	qint64 connectedAt() const { return m_connectedAt; }
+
+	void setWebSocket(QWebSocket *ws);
 	void setWritable(bool writable);
 	bool isWritable() const;
 	void setReadonly(bool readonly);
@@ -45,6 +52,9 @@ public slots:
 private:
 	Pty *m_pty;
 	QWebSocket *m_ws;
+	QString m_sessionId;
+	QString m_portName;
+	qint64 m_connectedAt;
 	bool m_writable;
 	bool m_readonly;
 };

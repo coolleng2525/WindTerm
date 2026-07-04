@@ -17,10 +17,26 @@
 #include "Agent.h"
 #include "Reporter.h"
 #include "Config.h"
+#include "Commander.h"
+#include "TerminalShare.h"
 
+#include <QAbstractSocket>
+#include <QByteArray>
+#include <QDateTime>
+#include <QEventLoop>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSysInfo>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QWebSocket>
+#include <QUuid>
+
+#include "Pty/Pty.h"
 
 HubTermAgent *HubTermAgent::s_instance = nullptr;
 
@@ -38,7 +54,17 @@ HubTermAgent::HubTermAgent(QObject *parent /*= nullptr*/)
 	, m_reportTimer(nullptr)
 	, m_reconnectDelay(1000)
 	, m_stopping(false)
-{}
+	, m_commander(new HubTermCommander(this))
+{
+	connect(this, &HubTermAgent::commandReceived, m_commander, &HubTermCommander::execute);
+	connect(m_commander, &HubTermCommander::commandResult, this, [this](const QJsonObject &result) {
+		if (!isConnected()) {
+			return;
+		}
+		QJsonDocument doc(result);
+		m_ws->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+	});
+}
 
 void HubTermAgent::start(const QString &centerUrl) {
 	if (m_ws != nullptr && m_ws->state() != QAbstractSocket::UnconnectedState) {
@@ -48,6 +74,7 @@ void HubTermAgent::start(const QString &centerUrl) {
 	m_centerUrl = centerUrl;
 	m_stopping = false;
 	m_reconnectDelay = 1000;
+	HubTermConfig::instance()->setCenterUrl(normalizeCenterUrl(centerUrl));
 
 	if (m_ws == nullptr) {
 		m_ws = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
@@ -58,8 +85,16 @@ void HubTermAgent::start(const QString &centerUrl) {
 		connect(m_ws, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
 				this, &HubTermAgent::onWsError);
 	}
+	for (TerminalShare *share : m_terminalShares) {
+		share->setWebSocket(m_ws);
+	}
 
-	m_ws->open(QUrl(m_centerUrl));
+	if (!ensureRegistered()) {
+		tryReconnect();
+		return;
+	}
+
+	openWebSocket();
 }
 
 void HubTermAgent::stop() {
@@ -78,6 +113,9 @@ void HubTermAgent::stop() {
 		m_ws->deleteLater();
 		m_ws = nullptr;
 	}
+
+	qDeleteAll(m_terminalShares);
+	m_terminalShares.clear();
 }
 
 bool HubTermAgent::isConnected() const {
@@ -87,11 +125,24 @@ bool HubTermAgent::isConnected() const {
 void HubTermAgent::attachPty(Pty *pty) {
 	if (pty && !m_attachedPtys.contains(pty)) {
 		m_attachedPtys.append(pty);
+		pty->setHubTermEnabled(true);
+
+		const QString sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+		TerminalShare *share = new TerminalShare(pty, m_ws, sessionId, QStringLiteral("WindTerm terminal"), this);
+		m_terminalShares.insert(pty, share);
+		sendReport();
 	}
 }
 
 void HubTermAgent::detachPty(Pty *pty) {
 	m_attachedPtys.removeAll(pty);
+	if (m_terminalShares.contains(pty)) {
+		delete m_terminalShares.take(pty);
+	}
+	if (pty) {
+		pty->setHubTermEnabled(false);
+	}
+	sendReport();
 }
 
 void HubTermAgent::onWsConnected() {
@@ -136,8 +187,7 @@ void HubTermAgent::onWsTextMessage(const QString &message) {
 		return;
 	}
 
-	QJsonObject cmd = doc.object();
-	emit commandReceived(cmd);
+	routeCommand(doc.object());
 }
 
 void HubTermAgent::onWsError(QAbstractSocket::SocketError error) {
@@ -154,7 +204,7 @@ void HubTermAgent::tryReconnect() {
 		m_reconnectTimer->setSingleShot(true);
 		connect(m_reconnectTimer, &QTimer::timeout, this, [this]() {
 			if (!m_stopping && m_ws) {
-				m_ws->open(QUrl(m_centerUrl));
+				start(m_centerUrl);
 			}
 		});
 	}
@@ -164,23 +214,155 @@ void HubTermAgent::tryReconnect() {
 	m_reconnectDelay = qMin(m_reconnectDelay * 2, 30000);
 }
 
+bool HubTermAgent::ensureRegistered() {
+	HubTermConfig *cfg = HubTermConfig::instance();
+	if (cfg->nodeId().isEmpty()) {
+		cfg->setNodeId(QUuid::createUuid().toString(QUuid::WithoutBraces));
+	}
+	if (!cfg->token().isEmpty()) {
+		cfg->save();
+		return true;
+	}
+
+	QNetworkRequest request{QUrl(reportUrl())};
+	request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+
+	QNetworkAccessManager manager;
+	QNetworkReply *reply = manager.post(request, QJsonDocument(buildNodeReport()).toJson(QJsonDocument::Compact));
+	QEventLoop loop;
+	connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+	loop.exec();
+
+	const bool ok = reply->error() == QNetworkReply::NoError;
+	if (ok) {
+		QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+		const QString token = doc.object().value(QStringLiteral("token")).toString();
+		if (!token.isEmpty()) {
+			cfg->setToken(token);
+			cfg->save();
+		}
+	}
+	reply->deleteLater();
+	return ok && !cfg->token().isEmpty();
+}
+
+void HubTermAgent::openWebSocket() {
+	QNetworkRequest request{QUrl(agentUrl())};
+	const QString token = HubTermConfig::instance()->token();
+	if (!token.isEmpty()) {
+		request.setRawHeader("Sec-WebSocket-Protocol",
+							 QStringLiteral("hubterm, hubterm.node.%1").arg(token).toUtf8());
+	}
+	m_ws->open(request);
+}
+
 void HubTermAgent::sendReport() {
 	if (!isConnected()) {
 		return;
 	}
 
+	QJsonObject msg;
+	msg[QStringLiteral("type")] = QStringLiteral("report");
+	msg[QStringLiteral("data")] = buildNodeReport();
+
+	QJsonDocument doc(msg);
+	m_ws->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+}
+
+QJsonObject HubTermAgent::buildNodeReport() const {
 	HubTermReporter reporter;
 	QJsonObject report;
 
-	report[QStringLiteral("type")] = QStringLiteral("report");
 	report[QStringLiteral("node_id")] = HubTermConfig::instance()->nodeId();
-	report[QStringLiteral("node_name")] = HubTermConfig::instance()->nodeName();
-	report[QStringLiteral("domain")] = HubTermConfig::instance()->domain();
-	report[QStringLiteral("system_info")] = reporter.collectSystemInfo();
-	report[QStringLiteral("capabilities")] = reporter.collectCapabilities();
-	report[QStringLiteral("serial_ports")] = reporter.collectSerialPorts();
-	report[QStringLiteral("attached_terminals")] = static_cast<int>(m_attachedPtys.size());
+	report[QStringLiteral("source")] = QStringLiteral("agent");
+	report[QStringLiteral("name")] = HubTermConfig::instance()->nodeName();
+	report[QStringLiteral("hostname")] = QSysInfo::machineHostName();
+	report[QStringLiteral("os")] = reporter.osName();
+	report[QStringLiteral("os_version")] = QSysInfo::prettyProductName();
+	report[QStringLiteral("arch")] = reporter.cpuArchitecture();
 
-	QJsonDocument doc(report);
-	m_ws->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+	QJsonObject metrics = reporter.collectSystemMetrics();
+	report[QStringLiteral("cpu_percent")] = metrics.value(QStringLiteral("cpu_percent")).toDouble();
+	report[QStringLiteral("memory_total")] = metrics.value(QStringLiteral("memory_total")).toDouble();
+	report[QStringLiteral("memory_used")] = metrics.value(QStringLiteral("memory_used")).toDouble();
+	report[QStringLiteral("memory_percent")] = metrics.value(QStringLiteral("memory_percent")).toDouble();
+	report[QStringLiteral("disk_total")] = metrics.value(QStringLiteral("disk_total")).toDouble();
+	report[QStringLiteral("disk_used")] = metrics.value(QStringLiteral("disk_used")).toDouble();
+	report[QStringLiteral("serial_ports")] = reporter.collectSerialPorts();
+
+	QJsonArray sessions;
+	for (TerminalShare *share : m_terminalShares) {
+		QJsonObject session;
+		session[QStringLiteral("session_id")] = share->sessionId();
+		session[QStringLiteral("port_name")] = share->portName();
+		session[QStringLiteral("user")] = QString();
+		session[QStringLiteral("type")] = QStringLiteral("master");
+		session[QStringLiteral("client_ip")] = QString();
+		session[QStringLiteral("connected_at")] = share->connectedAt();
+		sessions.append(session);
+	}
+	report[QStringLiteral("sessions")] = sessions;
+	return report;
+}
+
+QString HubTermAgent::normalizeCenterUrl(const QString &centerUrl) const {
+	QUrl url(centerUrl);
+	if (!url.isValid()) {
+		return centerUrl;
+	}
+	if (url.path().isEmpty() || url.path() == QLatin1String("/") || url.path() == QLatin1String("/ws") || url.path() == QLatin1String("/api/ws")) {
+		url.setPath(QStringLiteral("/api/ws/agent"));
+	}
+	return url.toString();
+}
+
+QString HubTermAgent::agentUrl() const {
+	QUrl url(HubTermConfig::instance()->centerUrl());
+	url.setQuery(QString());
+	QUrlQuery query;
+	query.addQueryItem(QStringLiteral("node_id"), HubTermConfig::instance()->nodeId());
+	url.setQuery(query);
+	return url.toString();
+}
+
+QString HubTermAgent::reportUrl() const {
+	QUrl url(HubTermConfig::instance()->centerUrl());
+	url.setScheme(url.scheme() == QLatin1String("wss") ? QStringLiteral("https") : QStringLiteral("http"));
+	url.setPath(QStringLiteral("/api/nodes/report"));
+	url.setQuery(QString());
+	return url.toString();
+}
+
+void HubTermAgent::routeCommand(const QJsonObject &message) {
+	const QString type = message.value(QStringLiteral("type")).toString();
+	const QJsonObject data = message.value(QStringLiteral("data")).toObject();
+	const QJsonObject payload = data.value(QStringLiteral("payload")).toObject(data);
+
+	if (type == QLatin1String("write")) {
+		handleWriteCommand(payload);
+		return;
+	}
+	if (type == QLatin1String("disconnect") || type == QLatin1String("kick_session")) {
+		const QString sessionId = payload.value(QStringLiteral("session_id")).toString();
+		for (auto it = m_terminalShares.begin(); it != m_terminalShares.end(); ++it) {
+			if (it.value()->sessionId() == sessionId) {
+				detachPty(it.key());
+				return;
+			}
+		}
+	}
+
+	emit commandReceived(message);
+}
+
+void HubTermAgent::handleWriteCommand(const QJsonObject &payload) {
+	const QString sessionId = payload.value(QStringLiteral("session_id")).toString();
+	const QByteArray data = QByteArray::fromBase64(payload.value(QStringLiteral("data")).toString().toLatin1());
+
+	for (TerminalShare *share : m_terminalShares) {
+		if (share->sessionId() == sessionId) {
+			share->onRemoteWrite(data);
+			return;
+		}
+	}
 }

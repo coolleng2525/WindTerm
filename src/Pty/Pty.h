@@ -19,7 +19,7 @@
 
 #include <QObject>
 
-#include "Public/Spin.h"
+#include "Utility/Spin.h"
 
 class QWinEventNotifier;
 
@@ -29,7 +29,7 @@ class Pty
 	Q_OBJECT
 
 public:
-	Pty();
+	explicit Pty(QObject *parent = nullptr);
 	virtual ~Pty() = default;
 
 	virtual bool createProcess(QString command, const QString &arguments,

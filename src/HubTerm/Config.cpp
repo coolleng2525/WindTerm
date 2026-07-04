@@ -41,7 +41,7 @@ HubTermConfig::HubTermConfig(QObject *parent /*= nullptr*/)
 }
 
 void HubTermConfig::setDefaults() {
-	m_centerUrl = QStringLiteral("ws://127.0.0.1:8900/hubterm");
+	m_centerUrl = QStringLiteral("ws://127.0.0.1:8097/api/ws/agent");
 	m_nodeId = QString();
 	m_nodeName = QSysInfo::machineHostName();
 	m_token = QString();

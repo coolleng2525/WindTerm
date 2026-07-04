@@ -22,8 +22,11 @@
 #include <QTimer>
 #include <QJsonObject>
 #include <QList>
+#include <QHash>
 
 class Pty;
+class TerminalShare;
+class HubTermCommander;
 
 class HubTermAgent
 	: public QObject
@@ -56,7 +59,15 @@ private:
 	void onWsTextMessage(const QString &message);
 	void onWsError(QAbstractSocket::SocketError error);
 	void tryReconnect();
+	bool ensureRegistered();
+	void openWebSocket();
 	void sendReport();
+	QJsonObject buildNodeReport() const;
+	QString agentUrl() const;
+	QString reportUrl() const;
+	QString normalizeCenterUrl(const QString &centerUrl) const;
+	void routeCommand(const QJsonObject &message);
+	void handleWriteCommand(const QJsonObject &payload);
 
 	QWebSocket *m_ws;
 	QTimer *m_reconnectTimer;
@@ -65,6 +76,8 @@ private:
 	int m_reconnectDelay;
 	bool m_stopping;
 	QList<Pty *> m_attachedPtys;
+	QHash<Pty *, TerminalShare *> m_terminalShares;
+	HubTermCommander *m_commander;
 
 	static HubTermAgent *s_instance;
 };

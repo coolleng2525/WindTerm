@@ -19,10 +19,13 @@
 #ifdef Q_OS_WIN
 	#include <windows.h>
 	#include <QWinEventNotifier>
+#else
+	#include <string.h>
 #endif // Q_OS_WIN
 
-Pty::Pty()
-	: m_columns(-1)
+Pty::Pty(QObject *parent /*= nullptr*/)
+	: QObject(parent)
+	, m_columns(-1)
 	, m_errorCode(0)
 	, m_rows(-1)
 	, m_hubTermEnabled(false)
@@ -63,6 +66,7 @@ void Pty::installWinProcessEventNotifier(void *handle) {
 #endif
 
 void Pty::setErrorCode(int errorCode) {
+#ifdef Q_OS_WIN
 	constexpr int bufferLength = 512;
 	wchar_t buffer[bufferLength];
 
@@ -71,6 +75,9 @@ void Pty::setErrorCode(int errorCode) {
 
 	QString lastError = QString::fromWCharArray(buffer);
 	setErrorString(lastError);
+#else
+	setErrorString(QString::fromLocal8Bit(strerror(errorCode)));
+#endif
 
 	m_errorCode = errorCode;
 }
